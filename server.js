@@ -46,6 +46,12 @@ const server = http.createServer(app);
 const activeRooms = new Set();
 const activeClientSockets = new Map();
 
+function normalizeRoomId(roomId) {
+  const suiteId = String(roomId || "").replace(/^room-/, "");
+
+  return `room-${suiteId}`;
+}
+
 app.get("/rooms", (req, res) => {
   res.json({
     rooms: Array.from(activeRooms)
@@ -53,8 +59,12 @@ app.get("/rooms", (req, res) => {
 });
 
 async function getActiveSuiteQueue() {
+  const uniqueRooms = Array.from(
+    new Set(Array.from(activeRooms).map((roomId) => normalizeRoomId(roomId)))
+  );
+
   const suiteStatuses = await Promise.all(
-    Array.from(activeRooms).map(async (roomId) => {
+    uniqueRooms.map(async (roomId) => {
       const suiteStatus = await getSuiteStatus(roomId);
 
       return suiteStatus || {
@@ -71,7 +81,20 @@ async function getActiveSuiteQueue() {
     })
   );
 
-  return sortSuitesForQueue(suiteStatuses);
+  const uniqueSuites = Array.from(
+    suiteStatuses
+      .reduce((acc, suite) => {
+        acc.set(suite.suiteId, {
+          ...suite,
+          roomId: normalizeRoomId(suite.roomId)
+        });
+
+        return acc;
+      }, new Map())
+      .values()
+  );
+
+  return sortSuitesForQueue(uniqueSuites);
 }
 
 async function emitSuiteOperationalUpdates(suiteStatus) {
@@ -244,21 +267,22 @@ io.on("connection", (socket) => {
   socket.on("joinRoom", async ({ roomId, userType }) => {
 
     try {
+      const normalizedRoomId = normalizeRoomId(roomId);
 
-      socket.join(roomId);
+      socket.join(normalizedRoomId);
 
-      activeRooms.add(roomId);
+      activeRooms.add(normalizedRoomId);
 
       io.emit("activeRooms", Array.from(activeRooms));
       io.emit("queueUpdated", await getActiveSuiteQueue());
 
-      console.log(`${userType} entró a la sala ${roomId}`);
+      console.log(`${userType} entró a la sala ${normalizedRoomId}`);
 
-      const history = await getMessagesByRoom(roomId);
+      const history = await getMessagesByRoom(normalizedRoomId);
 
       socket.emit("chatHistory", history);
 
-      const suiteStatus = await getSuiteStatus(roomId);
+      const suiteStatus = await getSuiteStatus(normalizedRoomId);
 
       if (suiteStatus) {
         socket.emit("suiteStatus", suiteStatus);

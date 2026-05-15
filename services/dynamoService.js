@@ -262,16 +262,16 @@ function sortSuitesForQueue(suites) {
   };
 
   return suites.sort((a, b) => {
+    if (statusWeight[a.status] !== statusWeight[b.status]) {
+      return statusWeight[a.status] - statusWeight[b.status];
+    }
+
     if (b.unresolvedCount !== a.unresolvedCount) {
       return b.unresolvedCount - a.unresolvedCount;
     }
 
     if (Number(b.vip) !== Number(a.vip)) {
       return Number(b.vip) - Number(a.vip);
-    }
-
-    if (statusWeight[a.status] !== statusWeight[b.status]) {
-      return statusWeight[a.status] - statusWeight[b.status];
     }
 
     return new Date(a.lastMessageAt || 0) - new Date(b.lastMessageAt || 0);
