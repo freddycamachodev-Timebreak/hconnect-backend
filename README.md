@@ -53,8 +53,12 @@ AWS_REGION=
 AWS_ACCESS_KEY_ID=
 AWS_SECRET_ACCESS_KEY=
 BEDROCK_MODEL_ID=
+DYNAMODB_MESSAGES_TABLE=
+DYNAMODB_SUITES_TABLE=
 PORT=3000
 ```
+
+`DYNAMODB_SUITES_TABLE` is optional. If it is not configured, suite status is saved in the messages table with a technical `suiteStatus` record.
 
 ---
 
