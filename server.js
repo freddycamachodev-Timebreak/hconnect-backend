@@ -8,7 +8,10 @@ const {
   saveMessage,
   getMessagesByRoom,
   saveSuiteStatus,
-  getSuiteStatus
+  getSuiteStatus,
+  updateSuiteMessageActivity,
+  getValidSuiteStatuses,
+  sortSuitesForQueue
 } = require("./services/dynamoService");
 
 const {
@@ -23,7 +26,7 @@ app.use(express.json());
 
 app.use(cors({
   origin: ["http://localhost:3000", "http://localhost:3001"],
-  methods: ["GET", "POST"]
+  methods: ["GET", "POST", "PUT"]
 }));
 
 app.get("/", (req, res) => {
@@ -49,11 +52,82 @@ app.get("/rooms", (req, res) => {
   });
 });
 
+async function getActiveSuiteQueue() {
+  const suiteStatuses = await Promise.all(
+    Array.from(activeRooms).map(async (roomId) => {
+      const suiteStatus = await getSuiteStatus(roomId);
+
+      return suiteStatus || {
+        suiteId: roomId.replace(/^room-/, ""),
+        roomId,
+        status: "waiting",
+        updatedAt: null,
+        updatedBy: null,
+        priority: "normal",
+        vip: false,
+        lastMessageAt: null,
+        unresolvedCount: 0
+      };
+    })
+  );
+
+  return sortSuitesForQueue(suiteStatuses);
+}
+
+async function emitSuiteOperationalUpdates(suiteStatus) {
+  const queue = await getActiveSuiteQueue();
+
+  io.emit("suiteStatusUpdated", suiteStatus);
+  io.emit("queueUpdated", queue);
+}
+
 /*
 |--------------------------------------------------------------------------
 | Suite Status
 |--------------------------------------------------------------------------
 */
+
+app.get("/suites/statuses", (req, res) => {
+  res.json({
+    statuses: getValidSuiteStatuses()
+  });
+});
+
+app.get("/suites/queue", async (req, res) => {
+  try {
+    const queue = await getActiveSuiteQueue();
+
+    res.json({
+      suites: queue
+    });
+  } catch (error) {
+    console.error("Error al obtener queue de suites:", error);
+
+    res.status(500).json({
+      message: "Error al obtener queue de suites"
+    });
+  }
+});
+
+app.get("/suites/:suiteId", async (req, res) => {
+  try {
+    const suiteStatus = await getSuiteStatus(req.params.suiteId);
+
+    if (!suiteStatus) {
+      return res.status(404).json({
+        message: "Suite not found"
+      });
+    }
+
+    res.json(suiteStatus);
+  } catch (error) {
+    console.error("Error al obtener suite:", error);
+
+    res.status(500).json({
+      message: "Error al obtener suite"
+    });
+  }
+});
 
 app.get("/suites/:suiteId/status", async (req, res) => {
   try {
@@ -75,9 +149,17 @@ app.get("/suites/:suiteId/status", async (req, res) => {
   }
 });
 
-app.post("/suites/:suiteId/status", async (req, res) => {
+async function updateSuiteStatusHandler(req, res) {
   try {
-    const { status, roomId, updatedBy } = req.body || {};
+    const {
+      status,
+      roomId,
+      updatedBy,
+      priority,
+      vip,
+      lastMessageAt,
+      unresolvedCount
+    } = req.body || {};
 
     if (!status) {
       return res.status(400).json({
@@ -89,20 +171,31 @@ app.post("/suites/:suiteId/status", async (req, res) => {
       suiteId: req.params.suiteId,
       roomId,
       status,
-      updatedBy
+      updatedBy,
+      priority,
+      vip,
+      lastMessageAt,
+      unresolvedCount
     });
 
-    io.emit("suiteStatusUpdated", suiteStatus);
+    await emitSuiteOperationalUpdates(suiteStatus);
 
     res.status(201).json(suiteStatus);
   } catch (error) {
     console.error("Error al guardar status de suite:", error);
 
-    res.status(500).json({
+    const statusCode = error.message?.startsWith("Invalid suite status")
+      ? 400
+      : 500;
+
+    res.status(statusCode).json({
       message: "Error al guardar status de suite"
     });
   }
-});
+}
+
+app.post("/suites/:suiteId/status", updateSuiteStatusHandler);
+app.put("/suites/:suiteId/status", updateSuiteStatusHandler);
 
 /*
 |--------------------------------------------------------------------------
@@ -113,7 +206,7 @@ app.post("/suites/:suiteId/status", async (req, res) => {
 const io = new Server(server, {
   cors: {
     origin: ["http://localhost:3000", "http://localhost:3001"],
-    methods: ["GET", "POST"]
+    methods: ["GET", "POST", "PUT"]
   }
 });
 
@@ -157,6 +250,7 @@ io.on("connection", (socket) => {
       activeRooms.add(roomId);
 
       io.emit("activeRooms", Array.from(activeRooms));
+      io.emit("queueUpdated", await getActiveSuiteQueue());
 
       console.log(`${userType} entró a la sala ${roomId}`);
 
@@ -208,10 +302,14 @@ io.on("connection", (socket) => {
         suiteId,
         roomId: data.roomId || suiteId,
         status: data.status,
-        updatedBy: data.updatedBy || data.sender
+        updatedBy: data.updatedBy || data.sender,
+        priority: data.priority,
+        vip: data.vip,
+        lastMessageAt: data.lastMessageAt,
+        unresolvedCount: data.unresolvedCount
       });
 
-      io.emit("suiteStatusUpdated", suiteStatus);
+      await emitSuiteOperationalUpdates(suiteStatus);
 
       console.log("Status de suite guardado:", suiteStatus);
     } catch (error) {
@@ -266,6 +364,11 @@ io.on("connection", (socket) => {
       };
 
       await saveMessage(newMessage);
+      const suiteStatus = await updateSuiteMessageActivity({
+        roomId: data.roomId,
+        sender: data.sender,
+        timestamp: newMessage.timestamp
+      });
 
       console.log("Mensaje traducido guardado:", newMessage);
 
@@ -286,6 +389,8 @@ io.on("connection", (socket) => {
       sender: newMessage.sender,
       timestamp: newMessage.timestamp
     });
+
+      await emitSuiteOperationalUpdates(suiteStatus);
 
     } catch (error) {
 

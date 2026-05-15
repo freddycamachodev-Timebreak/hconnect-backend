@@ -55,10 +55,61 @@ AWS_SECRET_ACCESS_KEY=
 BEDROCK_MODEL_ID=
 DYNAMODB_MESSAGES_TABLE=
 DYNAMODB_SUITES_TABLE=
+DYNAMODB_SUITE_HISTORY_TABLE=
 PORT=3000
 ```
 
 `DYNAMODB_SUITES_TABLE` is optional. If it is not configured, suite status is saved in the messages table with a technical `suiteStatus` record.
+`DYNAMODB_SUITE_HISTORY_TABLE` is optional. If it is not configured, suite lifecycle activity is saved in the messages table with technical `suiteActivity` records.
+
+---
+
+## Suite Lifecycle API
+
+Valid suite statuses:
+
+```text
+waiting
+active
+pending
+resolved
+checkout
+offline
+```
+
+Endpoints:
+
+```http
+GET /suites/statuses
+GET /suites/queue
+GET /suites/:suiteId
+GET /suites/:suiteId/status
+POST /suites/:suiteId/status
+PUT /suites/:suiteId/status
+```
+
+Status update body:
+
+```json
+{
+  "status": "active",
+  "roomId": "room-101",
+  "updatedBy": "staff",
+  "priority": "normal",
+  "vip": false,
+  "lastMessageAt": "2026-05-15T18:20:00.000Z",
+  "unresolvedCount": 0
+}
+```
+
+Socket events:
+
+```text
+suiteStatus
+suiteStatusUpdated
+queueUpdated
+suiteStatusError
+```
 
 ---
 
