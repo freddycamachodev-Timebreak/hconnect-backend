@@ -236,11 +236,15 @@ async function updateSuiteMessageActivity({ roomId, sender, timestamp }) {
   const currentSuiteStatus = await getSuiteStatus(suiteId);
   const currentUnresolvedCount = Number(currentSuiteStatus?.unresolvedCount || 0);
   const isGuestMessage = sender === "guest";
+  const shouldReopenSuite = isGuestMessage && (
+    !currentSuiteStatus ||
+    ["resolved", "checkout", "offline"].includes(currentSuiteStatus.status)
+  );
 
   return saveSuiteStatus({
     suiteId,
     roomId,
-    status: isGuestMessage && !currentSuiteStatus ? "waiting" : currentSuiteStatus?.status,
+    status: shouldReopenSuite ? "waiting" : currentSuiteStatus?.status,
     updatedBy: sender,
     lastMessageAt: timestamp,
     unresolvedCount: isGuestMessage ? currentUnresolvedCount + 1 : 0
@@ -249,6 +253,23 @@ async function updateSuiteMessageActivity({ roomId, sender, timestamp }) {
 
 function getValidSuiteStatuses() {
   return Array.from(VALID_SUITE_STATUSES);
+}
+
+function getSlaSortRank(suite) {
+  if ((suite.unresolvedCount || 0) <= 0 || !suite.lastMessageAt) {
+    return 0;
+  }
+
+  const minutesWithoutResponse = Math.max(
+    0,
+    Math.floor((Date.now() - new Date(suite.lastMessageAt).getTime()) / 60000)
+  );
+
+  if (minutesWithoutResponse > 30) return 4;
+  if (minutesWithoutResponse > 15) return 3;
+  if (minutesWithoutResponse >= 5) return 2;
+
+  return 1;
 }
 
 function sortSuitesForQueue(suites) {
@@ -262,19 +283,33 @@ function sortSuitesForQueue(suites) {
   };
 
   return suites.sort((a, b) => {
-    if (statusWeight[a.status] !== statusWeight[b.status]) {
-      return statusWeight[a.status] - statusWeight[b.status];
+    const openWorkDiff =
+      Number((b.unresolvedCount || 0) > 0) -
+      Number((a.unresolvedCount || 0) > 0);
+
+    if (openWorkDiff !== 0) {
+      return openWorkDiff;
     }
 
-    if (b.unresolvedCount !== a.unresolvedCount) {
-      return b.unresolvedCount - a.unresolvedCount;
+    const slaDiff = getSlaSortRank(b) - getSlaSortRank(a);
+
+    if (slaDiff !== 0) {
+      return slaDiff;
     }
 
     if (Number(b.vip) !== Number(a.vip)) {
       return Number(b.vip) - Number(a.vip);
     }
 
-    return new Date(a.lastMessageAt || 0) - new Date(b.lastMessageAt || 0);
+    if ((b.unresolvedCount || 0) !== (a.unresolvedCount || 0)) {
+      return (b.unresolvedCount || 0) - (a.unresolvedCount || 0);
+    }
+
+    if (statusWeight[a.status] !== statusWeight[b.status]) {
+      return statusWeight[a.status] - statusWeight[b.status];
+    }
+
+    return new Date(b.lastMessageAt || 0) - new Date(a.lastMessageAt || 0);
   });
 }
 
