@@ -108,17 +108,17 @@ io.on("connection", (socket) => {
 
     try {
 
-      let sourceLanguage = "es";
-      let targetLanguage = "en";
+      let sourceLanguage = data.sourceLanguage || "es";
+      let targetLanguage = data.targetLanguage || "en";
 
       if (data.sender === "guest") {
-        sourceLanguage = "en";
-        targetLanguage = "es";
+        sourceLanguage = data.sourceLanguage || "auto";
+        targetLanguage = data.targetLanguage || "es";
       }
 
       if (data.sender === "staff") {
-        sourceLanguage = "es";
-        targetLanguage = "en";
+        sourceLanguage = data.sourceLanguage || "es";
+        targetLanguage = data.targetLanguage || "en";
       }
 
       const translatedText = await translateText(
